@@ -114,3 +114,4 @@ ON CONFLICT DO NOTHING;
 
 echo "✅ Database setup complete! Tables created successfully.";
 ?>
+ 
