@@ -1,24 +1,26 @@
 <?php
-// db.php - Database configuration with currency settings
+// db.php - For Render PostgreSQL
 
-// Only start session if not already active
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-$host = 'localhost';
-$dbname = 'simple_bank';  // Your database name
-$username = 'root';
-$password = '';
+// Get database info from Render environment variables
+$host = getenv('DB_HOST');
+$port = getenv('DB_PORT');
+$dbname = getenv('DB_NAME');
+$username = getenv('DB_USER');
+$password = getenv('DB_PASSWORD');
 
+// Use PostgreSQL connection
 try {
-    $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8mb4", $username, $password);
+    $pdo = new PDO("pgsql:host=$host;port=$port;dbname=$dbname", $username, $password);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
     
-    // Currency configuration - Now set to EURO
-    define('CURRENCY_SYMBOL', '€');
-    define('CURRENCY_CODE', 'EUR');
+    // Currency configuration
+    define('CURRENCY_SYMBOL', getenv('CURRENCY_SYMBOL') ?: '€');
+    define('CURRENCY_CODE', getenv('CURRENCY_CODE') ?: 'EUR');
     define('CURRENCY_NAME', 'Euro');
     
 } catch(PDOException $e) {
