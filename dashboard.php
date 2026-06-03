@@ -43,7 +43,7 @@ $view_mode = $_SESSION['view_mode'];
 
 // 4. Get transactions based on view mode (PostgreSQL Compatible Syntax)
 if ($view_mode == 'daily') {
-    // Today's transactions only (Changed CURDATE() to CURRENT_DATE)
+    // Today's transactions only
     $stmt = $pdo->prepare("
         SELECT * FROM transactions 
         WHERE (sender_account_id = ? OR receiver_account_id = ?) 
@@ -54,11 +54,11 @@ if ($view_mode == 'daily') {
     $stmt->execute([$account_id, $account_id]);
     $recent_transactions = $stmt->fetchAll();
     
-    // Calculate today's stats (Changed CURDATE() to CURRENT_DATE)
+    // Calculate today's stats with explicit COALESCE fallbacks to prevent NULL memory glitches
     $stmt = $pdo->prepare("
         SELECT 
-            SUM(CASE WHEN receiver_account_id = ? THEN amount ELSE 0 END) as today_received,
-            SUM(CASE WHEN sender_account_id = ? THEN amount ELSE 0 END) as today_sent
+            COALESCE(SUM(CASE WHEN receiver_account_id = ? THEN amount ELSE 0 END), 0) as today_received,
+            COALESCE(SUM(CASE WHEN sender_account_id = ? THEN amount ELSE 0 END), 0) as today_sent
         FROM transactions 
         WHERE (sender_account_id = ? OR receiver_account_id = ?) 
         AND DATE(created_at) = CURRENT_DATE
@@ -66,11 +66,12 @@ if ($view_mode == 'daily') {
     $stmt->execute([$account_id, $account_id, $account_id, $account_id]);
     $today_stats = $stmt->fetch();
     
-    $total_received = $today_stats['today_received'] ?? 0;
-    $total_sent = $today_stats['today_sent'] ?? 0;
+    // Explicit array sanitation check to force zero numerical bounds
+    $total_received = (!empty($today_stats) && isset($today_stats['today_received'])) ? floatval($today_stats['today_received']) : 0.00;
+    $total_sent = (!empty($today_stats) && isset($today_stats['today_sent'])) ? floatval($today_stats['today_sent']) : 0.00;
     
 } else {
-    // Monthly view (Changed DATE_SUB syntax to PostgreSQL interval calculation syntax)
+    // Monthly view (PostgreSQL interval layout)
     $stmt = $pdo->prepare("
         SELECT * FROM transactions 
         WHERE (sender_account_id = ? OR receiver_account_id = ?) 
@@ -81,11 +82,11 @@ if ($view_mode == 'daily') {
     $stmt->execute([$account_id, $account_id]);
     $recent_transactions = $stmt->fetchAll();
     
-    // Calculate monthly stats (Changed DATE_SUB syntax to PostgreSQL interval calculation syntax)
+    // Calculate monthly stats with explicit COALESCE fallbacks
     $stmt = $pdo->prepare("
         SELECT 
-            SUM(CASE WHEN receiver_account_id = ? THEN amount ELSE 0 END) as monthly_received,
-            SUM(CASE WHEN sender_account_id = ? THEN amount ELSE 0 END) as monthly_sent
+            COALESCE(SUM(CASE WHEN receiver_account_id = ? THEN amount ELSE 0 END), 0) as monthly_received,
+            COALESCE(SUM(CASE WHEN sender_account_id = ? THEN amount ELSE 0 END), 0) as monthly_sent
         FROM transactions 
         WHERE (sender_account_id = ? OR receiver_account_id = ?) 
         AND created_at >= NOW() - INTERVAL '30 days'
@@ -93,8 +94,9 @@ if ($view_mode == 'daily') {
     $stmt->execute([$account_id, $account_id, $account_id, $account_id]);
     $monthly_stats = $stmt->fetch();
     
-    $total_received = $monthly_stats['monthly_received'] ?? 0;
-    $total_sent = $monthly_stats['monthly_sent'] ?? 0;
+    // Explicit array sanitation check to force zero numerical bounds
+    $total_received = (!empty($monthly_stats) && isset($monthly_stats['monthly_received'])) ? floatval($monthly_stats['monthly_received']) : 0.00;
+    $total_sent = (!empty($monthly_stats) && isset($monthly_stats['monthly_sent'])) ? floatval($monthly_stats['monthly_sent']) : 0.00;
 }
 
 // 5. Calculate quick stats (all time for comparison)
