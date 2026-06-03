@@ -1,10 +1,9 @@
 <?php
 session_start();
-require_once 'db.php'; // Changed to require_once
+require_once 'db.php';
 
 // Security Check: Only allow Admin
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
-...
     die("<h2 style='color:red;text-align:center;margin-top:50px;'>ACCESS DENIED.<br>You are not an administrator.</h2><center><a href='login.php'>Go Back</a></center>");
 }
 
@@ -90,7 +89,7 @@ if (isset($_GET['action']) && isset($_GET['deposit_id'])) {
         $stmt = $pdo->prepare("SELECT user_id FROM deposit_requests WHERE id = ?");
         $stmt->execute([$deposit_id]);
         $user_id_reject = $stmt->fetchColumn();
-        $stmt = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (?, 'deposit', 'Deposit Rejected', CONCAT('Your deposit request has been rejected.'), NOW())");
+        $stmt = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (?, 'deposit', 'Deposit Rejected', 'Your deposit request has been rejected.', NOW())");
         $stmt->execute([$user_id_reject]);
         
         $message = "Deposit request rejected.";
@@ -171,7 +170,7 @@ $transactions = $pdo->query("
     LIMIT 30
 ")->fetchAll();
 
-// Detect suspicious transactions (over €10,000)
+// Detect suspicious transactions (over 10,000)
 $suspicious = $pdo->query("
     SELECT t.*, sender_u.full_name AS sender_name
     FROM transactions t
@@ -770,7 +769,6 @@ $all_loans = $pdo->query("
             <div class="nav-tab" onclick="openTab('analytics')"><i class="fas fa-chart-line"></i> Analytics</div>
         </div>
 
-        <!-- Users Tab -->
         <div id="users" class="content-card active">
             <div class="card-header">
                 <h2><i class="fas fa-user-cog"></i> User Management</h2>
@@ -833,11 +831,10 @@ $all_loans = $pdo->query("
                         </tr>
                         <?php endforeach; ?>
                     </tbody>
-                </div>
+                </table>
             </div>
         </div>
 
-        <!-- Transactions Tab -->
         <div id="transactions" class="content-card">
             <div class="card-header">
                 <h2><i class="fas fa-history"></i> Recent Transactions</h2>
@@ -869,7 +866,6 @@ $all_loans = $pdo->query("
             </div>
         </div>
 
-        <!-- Suspicious Tab -->
         <div id="suspicious" class="content-card">
             <div class="card-header">
                 <h2><i class="fas fa-exclamation-triangle"></i> Suspicious Transactions</h2>
@@ -909,7 +905,6 @@ $all_loans = $pdo->query("
             <?php endif; ?>
         </div>
 
-        <!-- Deposits Tab -->
         <div id="deposits" class="content-card">
             <div class="card-header">
                 <h2><i class="fas fa-wallet"></i> Deposit Requests</h2>
@@ -938,21 +933,21 @@ $all_loans = $pdo->query("
                         <tbody>
                             <?php foreach ($all_deposits as $deposit): ?>
                             <tr>
-                                <td>#<?php echo $deposit['id']; ?></div>
+                                <td>#<?php echo $deposit['id']; ?></td>
                                 <td>
                                     <strong><?php echo htmlspecialchars($deposit['full_name']); ?></strong>
                                     <br>
                                     <small><?php echo $deposit['email']; ?></small>
-                                </div>
-                                <td><strong><?php echo $currency_symbol; ?><?php echo number_format($deposit['amount'], 2); ?></strong></div>
-                                <td><?php echo str_replace('_', ' ', ucfirst($deposit['payment_method'])); ?></div>
-                                <td><?php echo htmlspecialchars(substr($deposit['reason'], 0, 40)); ?>...</div>
-                                <td><?php echo date('M d, Y', strtotime($deposit['requested_date'])); ?></div>
+                                </td>
+                                <td><strong><?php echo $currency_symbol; ?><?php echo number_format($deposit['amount'], 2); ?></strong></td>
+                                <td><?php echo str_replace('_', ' ', ucfirst($deposit['payment_method'])); ?></td>
+                                <td><?php echo htmlspecialchars(substr($deposit['reason'], 0, 40)); ?>...</td>
+                                <td><?php echo date('M d, Y', strtotime($deposit['requested_date'])); ?></td>
                                 <td>
                                     <span class="status-badge status-<?php echo $deposit['status']; ?>">
                                         <?php echo ucfirst($deposit['status']); ?>
                                     </span>
-                                </div>
+                                </td>
                                 <td>
                                     <?php if ($deposit['status'] == 'pending'): ?>
                                         <a href="?action=approve_deposit&deposit_id=<?php echo $deposit['id']; ?>&note=Approved" class="action-btn btn-approve" onclick="return confirm('Approve deposit?')"><i class="fas fa-check"></i> Approve</a>
@@ -960,7 +955,7 @@ $all_loans = $pdo->query("
                                     <?php else: ?>
                                         <span style="color: #64748b;">Processed</span>
                                     <?php endif; ?>
-                                </div>
+                                </td>
                             </tr>
                             <?php endforeach; ?>
                         </tbody>
@@ -969,7 +964,6 @@ $all_loans = $pdo->query("
             <?php endif; ?>
         </div>
 
-        <!-- Loans Tab -->
         <div id="loans" class="content-card">
             <div class="card-header">
                 <h2><i class="fas fa-hand-holding-usd"></i> Loan Applications</h2>
@@ -999,22 +993,22 @@ $all_loans = $pdo->query("
                         <tbody>
                             <?php foreach ($all_loans as $loan): ?>
                             <tr>
-                                <td>#<?php echo $loan['id']; ?></div>
+                                <td>#<?php echo $loan['id']; ?></td>
                                 <td>
                                     <strong><?php echo htmlspecialchars($loan['full_name']); ?></strong>
                                     <br>
                                     <small><?php echo $loan['email']; ?></small>
-                                </div>
-                                <td><strong><?php echo $currency_symbol; ?><?php echo number_format($loan['amount'], 2); ?></strong></div>
-                                <td><?php echo ucfirst($loan['loan_type']); ?></div>
-                                <td><?php echo $loan['tenure']; ?> months</div>
-                                <td><?php echo $currency_symbol; ?><?php echo number_format($loan['emi'], 2); ?></div>
-                                <td><?php echo date('M d, Y', strtotime($loan['applied_date'])); ?></div>
+                                </td>
+                                <td><strong><?php echo $currency_symbol; ?><?php echo number_format($loan['amount'], 2); ?></strong></td>
+                                <td><?php echo ucfirst($loan['loan_type']); ?></td>
+                                <td><?php echo $loan['tenure']; ?> months</td>
+                                <td><?php echo $currency_symbol; ?><?php echo number_format($loan['emi'], 2); ?></td>
+                                <td><?php echo date('M d, Y', strtotime($loan['applied_date'])); ?></td>
                                 <td>
                                     <span class="status-badge status-<?php echo $loan['status']; ?>">
                                         <?php echo ucfirst($loan['status']); ?>
                                     </span>
-                                </div>
+                                </td>
                                 <td>
                                     <?php if ($loan['status'] == 'pending'): ?>
                                         <a href="?action=approve_loan&loan_id=<?php echo $loan['id']; ?>" class="action-btn btn-approve" onclick="return confirm('Approve this loan?')"><i class="fas fa-check"></i> Approve</a>
@@ -1022,7 +1016,7 @@ $all_loans = $pdo->query("
                                     <?php else: ?>
                                         <span style="color: #64748b;">Processed</span>
                                     <?php endif; ?>
-                                </div>
+                                </td>
                             </tr>
                             <?php endforeach; ?>
                         </tbody>
@@ -1031,7 +1025,6 @@ $all_loans = $pdo->query("
             <?php endif; ?>
         </div>
 
-        <!-- Analytics Tab -->
         <div id="analytics" class="content-card">
             <div class="card-header">
                 <h2><i class="fas fa-chart-line"></i> Analytics Dashboard</h2>
