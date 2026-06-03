@@ -1,9 +1,10 @@
 <?php
 session_start();
-require 'db.php';
+require_once 'db.php'; // Changed to require_once
 
 // Security Check: Only allow Admin
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+...
     die("<h2 style='color:red;text-align:center;margin-top:50px;'>ACCESS DENIED.<br>You are not an administrator.</h2><center><a href='login.php'>Go Back</a></center>");
 }
 
