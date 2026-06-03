@@ -1,24 +1,127 @@
 <?php
-// setup_db.php
+// setup_db.php - Run this to completely build your bank tables and admin user
 require_once 'db.php';
 
-// 1. Generate the mathematical hash for admin123 cleanly in PHP
+// 1. Generate a clean password hash for admin123 cleanly in PHP
 $real_hash = password_hash('admin123', PASSWORD_DEFAULT);
 
+// 2. The master script to build all required tables for your Barclays project
+$sql = "
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    full_name VARCHAR(100) NOT NULL,
+    username VARCHAR(50) UNIQUE,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    phone VARCHAR(20),
+    role VARCHAR(20) DEFAULT 'user',
+    status VARCHAR(20) DEFAULT 'approved',
+    is_frozen INTEGER DEFAULT 0,
+    transaction_pin VARCHAR(255),
+    profile_pic VARCHAR(255),
+    cover_pic VARCHAR(255),
+    two_factor_enabled INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS accounts (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    account_number VARCHAR(20) UNIQUE NOT NULL,
+    account_type VARCHAR(50) DEFAULT 'Savings',
+    balance DECIMAL(15,2) DEFAULT 0.00,
+    currency VARCHAR(3) DEFAULT 'EUR',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS transactions (
+    id SERIAL PRIMARY KEY,
+    sender_account_id INTEGER REFERENCES accounts(id),
+    receiver_account_id INTEGER REFERENCES accounts(id),
+    amount DECIMAL(15,2) NOT NULL,
+    type VARCHAR(20) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    type VARCHAR(50) NOT NULL,
+    title VARCHAR(200) NOT NULL,
+    message TEXT,
+    is_read INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS cards (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    card_name VARCHAR(100) NOT NULL,
+    card_type VARCHAR(20) DEFAULT 'visa',
+    card_number VARCHAR(16) NOT NULL,
+    masked_number VARCHAR(20) NOT NULL,
+    expiry_month VARCHAR(2) NOT NULL,
+    expiry_year VARCHAR(2) NOT NULL,
+    cvv VARCHAR(3) NOT NULL,
+    balance DECIMAL(15,2) DEFAULT 0,
+    is_default INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS deposit_requests (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    amount DECIMAL(15,2) NOT NULL,
+    reason TEXT,
+    payment_method VARCHAR(50),
+    receipt_path VARCHAR(255),
+    status VARCHAR(20) DEFAULT 'pending',
+    admin_notes TEXT,
+    requested_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    approved_date TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS loan_applications (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    amount DECIMAL(15,2) NOT NULL,
+    loan_type VARCHAR(50),
+    tenure INTEGER,
+    emi DECIMAL(15,2),
+    status VARCHAR(20) DEFAULT 'pending',
+    applied_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    approved_date TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS linked_bank_accounts (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    bank_name VARCHAR(100) NOT NULL,
+    account_holder VARCHAR(100) NOT NULL,
+    account_number VARCHAR(50) NOT NULL,
+    ifsc_code VARCHAR(20),
+    is_default INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+";
+
 try {
-    // 2. Clear out any old admin entry completely using a standalone command
+    // Execute table building queries
+    $pdo->exec($sql);
+    
+    // Clean out old conflicting admin rows
     $pdo->exec("DELETE FROM users WHERE username = 'admin' OR email = 'admin@barclays.com'");
 
-    // 3. Insert the fresh admin entry with the correct hash
-    $sql = "INSERT INTO users (full_name, username, email, password, role, status) 
-            VALUES ('System Admin', 'admin', 'admin@barclays.com', :password, 'admin', 'approved')";
-            
-    $stmt = $pdo->prepare($sql);
+    // Insert fresh admin row with a mathematically perfect hash match
+    $admin_sql = "INSERT INTO users (full_name, username, email, password, role, status) 
+                  VALUES ('System Admin', 'admin', 'admin@barclays.com', :password, 'admin', 'approved')";
+    $stmt = $pdo->prepare($admin_sql);
     $stmt->execute([':password' => $real_hash]);
 
-    echo "✅ Database updated successfully! The password is now natively set to admin123.";
+    echo "✅ Database tables successfully built and admin login set to admin123!";
 
 } catch (PDOException $e) {
-    die("❌ Error updating database: " . $e->getMessage());
+    die("❌ Error setting up database tables: " . $e->getMessage());
 }
 ?>
