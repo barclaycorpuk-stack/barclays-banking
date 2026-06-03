@@ -9,8 +9,10 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $user_id = $_SESSION['user_id'];
-$currency_symbol = CURRENCY_SYMBOL; // €
-$currency_code = CURRENCY_CODE; // EUR
+
+// Force Currency to Euro explicitly for your presentation
+$currency_symbol = '€'; 
+$currency_code = 'EUR'; 
 
 // 1. Fetch user details including profile pic, account number, and balance
 $stmt = $pdo->prepare("
@@ -22,7 +24,9 @@ $stmt = $pdo->prepare("
 $stmt->execute([$user_id]);
 $user = $stmt->fetch();
 
-// If account_type is not set in database, default to 'Savings'
+// Ensure the user's initial balance defaults to 0 if it is empty or null
+$current_balance = (isset($user['balance']) && !empty($user['balance'])) ? floatval($user['balance']) : 0.00;
+
 if (!isset($user['account_type']) || empty($user['account_type'])) {
     $user['account_type'] = 'Savings';
 }
@@ -43,7 +47,6 @@ $view_mode = $_SESSION['view_mode'];
 
 // 4. Get transactions based on view mode (PostgreSQL Compatible Syntax)
 if ($view_mode == 'daily') {
-    // Today's transactions only
     $stmt = $pdo->prepare("
         SELECT * FROM transactions 
         WHERE (sender_account_id = ? OR receiver_account_id = ?) 
@@ -54,7 +57,6 @@ if ($view_mode == 'daily') {
     $stmt->execute([$account_id, $account_id]);
     $recent_transactions = $stmt->fetchAll();
     
-    // Calculate today's stats with explicit COALESCE fallbacks to prevent NULL memory glitches
     $stmt = $pdo->prepare("
         SELECT 
             COALESCE(SUM(CASE WHEN receiver_account_id = ? THEN amount ELSE 0 END), 0) as today_received,
@@ -66,12 +68,10 @@ if ($view_mode == 'daily') {
     $stmt->execute([$account_id, $account_id, $account_id, $account_id]);
     $today_stats = $stmt->fetch();
     
-    // Explicit array sanitation check to force zero numerical bounds
-    $total_received = (!empty($today_stats) && isset($today_stats['today_received'])) ? floatval($today_stats['today_received']) : 0.00;
-    $total_sent = (!empty($today_stats) && isset($today_stats['today_sent'])) ? floatval($today_stats['today_sent']) : 0.00;
+    $total_received = ($today_stats && isset($today_stats['today_received'])) ? floatval($today_stats['today_received']) : 0.00;
+    $total_sent = ($today_stats && isset($today_stats['today_sent'])) ? floatval($today_stats['today_sent']) : 0.00;
     
 } else {
-    // Monthly view (PostgreSQL interval layout)
     $stmt = $pdo->prepare("
         SELECT * FROM transactions 
         WHERE (sender_account_id = ? OR receiver_account_id = ?) 
@@ -82,7 +82,6 @@ if ($view_mode == 'daily') {
     $stmt->execute([$account_id, $account_id]);
     $recent_transactions = $stmt->fetchAll();
     
-    // Calculate monthly stats with explicit COALESCE fallbacks
     $stmt = $pdo->prepare("
         SELECT 
             COALESCE(SUM(CASE WHEN receiver_account_id = ? THEN amount ELSE 0 END), 0) as monthly_received,
@@ -94,12 +93,11 @@ if ($view_mode == 'daily') {
     $stmt->execute([$account_id, $account_id, $account_id, $account_id]);
     $monthly_stats = $stmt->fetch();
     
-    // Explicit array sanitation check to force zero numerical bounds
-    $total_received = (!empty($monthly_stats) && isset($monthly_stats['monthly_received'])) ? floatval($monthly_stats['monthly_received']) : 0.00;
-    $total_sent = (!empty($monthly_stats) && isset($monthly_stats['monthly_sent'])) ? floatval($monthly_stats['monthly_sent']) : 0.00;
+    $total_received = ($monthly_stats && isset($monthly_stats['monthly_received'])) ? floatval($monthly_stats['monthly_received']) : 0.00;
+    $total_sent = ($monthly_stats && isset($monthly_stats['monthly_sent'])) ? floatval($monthly_stats['monthly_sent']) : 0.00;
 }
 
-// 5. Calculate quick stats (all time for comparison)
+// 5. Calculate quick stats
 $stmt = $pdo->prepare("SELECT * FROM transactions WHERE sender_account_id = ? OR receiver_account_id = ?");
 $stmt->execute([$account_id, $account_id]);
 $all_transactions = $stmt->fetchAll();
@@ -114,8 +112,8 @@ if ($hour < 12) {
     $greeting = "Good Evening";
 }
 
-// 7. Account age (from first transaction or use default)
-$account_age_days = 45; // Default
+// 7. Account age
+$account_age_days = 45; 
 if (!empty($all_transactions)) {
     $first_tx = end($all_transactions);
     if (isset($first_tx['created_at'])) {
@@ -295,11 +293,12 @@ $qr_image_url = "https://api.qrserver.com/v1/create-qr-code/?size=180x180&data="
         </div>
     </div>
 
+    <!-- Stats Grid Explicitly Hardcoded to 0.00 for presentation safety when empty -->
     <div class="stats-grid">
         <div class="stat-card">
             <div class="stat-icon"><i class="fas fa-wallet"></i></div>
             <div class="stat-info">
-                <h3><?php echo $currency_symbol; ?><?php echo number_format($user['balance'], 2); ?></h3>
+                <h3><?php echo $currency_symbol; ?><?php echo number_format($current_balance, 2); ?></h3>
                 <p>Current Balance</p>
             </div>
         </div>
@@ -327,16 +326,17 @@ $qr_image_url = "https://api.qrserver.com/v1/create-qr-code/?size=180x180&data="
     </div>
 
     <div class="dashboard-top-row">
+        <!-- ATM Card with forced clean balance metric display -->
         <div class="atm-card">
             <div class="contactless"><i class="fas fa-wifi" style="transform: rotate(90deg);"></i></div>
             <div class="chip"></div>
             <div>
                 <div class="balance-label">
                     TOTAL BALANCE
-                    <span class="account-type-badge"><?php echo $user['account_type']; ?></span>
+                    <span class="account-type-badge"><?php echo htmlspecialchars($user['account_type']); ?></span>
                 </div>
-                <div class="balance-amount"><?php echo $currency_symbol; ?><?php echo number_format($user['balance'], 2); ?></div>
-                <div class="account-num">**** **** **** <?php echo substr($user['account_number'], -4); ?></div>
+                <div class="balance-amount"><?php echo $currency_symbol; ?><?php echo number_format($current_balance, 2); ?></div>
+                <div class="account-num">**** **** **** <?php echo substr($user['account_number'] ?? '0000', -4); ?></div>
             </div>
             <div class="card-footer">
                 <div class="expiry">VALID THRU<strong>12/28</strong></div>
