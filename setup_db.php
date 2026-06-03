@@ -1,6 +1,9 @@
 <?php
-// setup_db.php - Run this to fix your admin user
+// setup_db.php - Run this once to clean up the admin user
 require_once 'db.php';
+
+// Dynamically generate a clean, perfect hash right now in PHP
+$real_hash = password_hash('admin123', PASSWORD_DEFAULT);
 
 $sql = "
 CREATE TABLE IF NOT EXISTS users (
@@ -14,16 +17,19 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Updated hash: This is now correctly set for 'admin123'
+-- Delete the broken admin user so we can write a fresh one
+DELETE FROM users WHERE username = 'admin' OR email = 'admin@barclays.com';
+
+-- Insert the admin user using our clean variable
 INSERT INTO users (full_name, username, email, password, role, status) 
-VALUES ('System Admin', 'admin', 'admin@barclays.com', '$2y$10$7R9I6.7mD99d0N8L3UqRSu1Y98m.gE5S8S0Z9P6hG1I2J3K4L5M6N', 'admin', 'approved')
-ON CONFLICT (email) DO UPDATE SET password = EXCLUDED.password;
+VALUES ('System Admin', 'admin', 'admin@barclays.com', :password, 'admin', 'approved');
 ";
 
 try {
-    $pdo->exec($sql);
-    echo "✅ Database updated! You can now login with 'admin' and 'admin123'.";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([':password' => $real_hash]);
+    echo "✅ Dynamic Database Setup Complete! Try running test_auth.php now.";
 } catch (PDOException $e) {
-    die("Error: " . $e->getMessage());
+    die("❌ Error updating database: " . $e->getMessage());
 }
 ?>
