@@ -73,10 +73,20 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['request_deposit'])) {
         try {
             $pdo->beginTransaction();
 
+            // FIX 1: Dynamically find the exact user ID assigned to your active Admin profile to prevent Foreign Key Exceptions
+            $admin_stmt = $pdo->query("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
+            $admin_id = $admin_stmt->fetchColumn();
+            
+            // Safeguard fallback constraint mapping
+            if (!$admin_id) {
+                $admin_id = $user_id; 
+            }
+
+            // Insert deposit record row parameters safely
             $stmt = $pdo->prepare("INSERT INTO deposit_requests (user_id, amount, reason, payment_method, receipt_path, status, requested_date) VALUES (?, ?, ?, ?, ?, 'pending', NOW())");
             $stmt->execute([$user_id, $amount, $reason, $payment_method, $receipt_path]);
             
-            // Fixed: Built strings directly in PHP to prevent PostgreSQL indeterminate data-type errors (parameter $2 exceptions)
+            // FIX 2: Pre-build notification context strings directly in PHP to bypass PostgreSQL indeterminate type errors
             $formatted_amount = $currency_symbol . number_format($amount, 2);
             $user_notification_msg = "Your deposit request of " . $formatted_amount . " has been submitted and is pending approval.";
             $admin_notification_msg = "User " . $user['full_name'] . " requested a deposit of " . $formatted_amount;
@@ -85,14 +95,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['request_deposit'])) {
             $stmt2 = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (?, 'deposit', 'Deposit Request Submitted', ?, NOW())");
             $stmt2->execute([$user_id, $user_notification_msg]);
             
-            // NOTIFICATION: Add notification for admin (user_id = 1)
-            $stmt3 = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (1, 'deposit', 'New Deposit Request', ?, NOW())");
-            $stmt3->execute([$admin_notification_msg]);
+            // NOTIFICATION: Add notification for admin mapping directly to dynamic id location
+            $stmt3 = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (?, 'deposit', 'New Deposit Request', ?, NOW())");
+            $stmt3->execute([$admin_id, $admin_notification_msg]);
             
             $pdo->commit();
             $message = "✅ Deposit request submitted! Please wait for admin approval. Funds will be added to your account once approved.";
             
-            // Refresh local balance metric variables safely to protect zero-balance boundaries
+            // Re-sync presentation local variables cleanly
             $account_balance = (isset($account['balance']) && !empty($account['balance'])) ? floatval($account['balance']) : 0.00;
         } catch (Exception $e) {
             $pdo->rollBack();
