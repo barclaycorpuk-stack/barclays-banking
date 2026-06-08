@@ -9,8 +9,8 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
 
 $message = "";
 $error = "";
-$currency_symbol = CURRENCY_SYMBOL;
-$currency_code = CURRENCY_CODE;
+$currency_symbol = '€';
+$currency_code = 'EUR';
 
 // --- Handle User Actions ---
 if (isset($_GET['action']) && isset($_GET['id']) && !isset($_GET['deposit_id']) && !isset($_GET['loan_id'])) {
@@ -104,7 +104,6 @@ if (isset($_GET['action']) && isset($_GET['loan_id'])) {
     $loan_id = intval($_GET['loan_id']);
     
     if ($action == 'approve_loan') {
-        // Get user_id before updating
         $stmt = $pdo->prepare("SELECT user_id FROM loan_applications WHERE id = ?");
         $stmt->execute([$loan_id]);
         $loan_user_id = $stmt->fetchColumn();
@@ -118,7 +117,6 @@ if (isset($_GET['action']) && isset($_GET['loan_id'])) {
         $message = "Loan approved successfully!";
         
     } elseif ($action == 'reject_loan') {
-        // Get user_id before updating
         $stmt = $pdo->prepare("SELECT user_id FROM loan_applications WHERE id = ?");
         $stmt->execute([$loan_id]);
         $loan_user_id = $stmt->fetchColumn();
@@ -143,9 +141,11 @@ $frozen_accounts = $pdo->query("SELECT COUNT(*) FROM users WHERE is_frozen=1")->
 $pending_deposits_count = $pdo->query("SELECT COUNT(*) FROM deposit_requests WHERE status='pending'")->fetchColumn();
 $pending_loans_count = $pdo->query("SELECT COUNT(*) FROM loan_applications WHERE status='pending'")->fetchColumn();
 
-// Fetch users
+// Fetch users with explicit fallback query overrides to clean out buffer leaks
 $users = $pdo->query("
-    SELECT u.*, a.balance, a.account_number 
+    SELECT u.*, 
+           COALESCE(a.balance, 0.00) as balance, 
+           a.account_number 
     FROM users u 
     LEFT JOIN accounts a ON u.id = a.user_id 
     ORDER BY 
@@ -192,7 +192,7 @@ $all_deposits = $pdo->query("
 
 // Fetch loan applications
 $all_loans = $pdo->query("
-    SELECT la.*, u.full_name, u.email, a.balance 
+    SELECT la.*, u.full_name, u.email, COALESCE(a.balance, 0.00) as balance 
     FROM loan_applications la 
     JOIN users u ON la.user_id = u.id 
     JOIN accounts a ON u.id = a.user_id 
@@ -212,504 +212,73 @@ $all_loans = $pdo->query("
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-        }
-
-        .navbar {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-            padding: 1rem 2rem;
-            position: sticky;
-            top: 0;
-            z-index: 1000;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-        }
-
-        .logo {
-            font-size: 1.8rem;
-            font-weight: 800;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            letter-spacing: -0.5px;
-        }
-
-        .nav-right {
-            display: flex;
-            align-items: center;
-            gap: 2rem;
-        }
-
-        .admin-badge {
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: white;
-            padding: 0.5rem 1.5rem;
-            border-radius: 50px;
-            font-weight: 600;
-            font-size: 0.9rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
-        }
-
-        .logout-btn {
-            background: #ff4757;
-            color: white;
-            padding: 0.5rem 1.5rem;
-            border-radius: 50px;
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 0.9rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            transition: 0.3s;
-            box-shadow: 0 4px 15px rgba(255, 71, 87, 0.3);
-        }
-
-        .logout-btn:hover {
-            background: #ff6b81;
-            transform: translateY(-2px);
-        }
-
-        .container {
-            max-width: 1400px;
-            margin: 2rem auto;
-            padding: 0 2rem;
-        }
-
-        .alert {
-            padding: 15px 20px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            animation: slideDown 0.3s ease;
-        }
-
-        .alert-success {
-            background: #dcfce7;
-            color: #166534;
-        }
-
-        .welcome-section {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 2rem;
-            margin-bottom: 2rem;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            animation: slideDown 0.5s ease;
-        }
-
-        .welcome-section h1 {
-            font-size: 2.5rem;
-            font-weight: 700;
-            color: #2d3748;
-            margin-bottom: 0.5rem;
-        }
-
-        .welcome-section p {
-            color: #718096;
-            font-size: 1.1rem;
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 1.5rem;
-            margin-bottom: 2rem;
-        }
-
-        .stat-card {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 1.8rem;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            transition: 0.3s;
-            animation: fadeInUp 0.5s ease;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-10px);
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
-        }
-
-        .stat-info h3 {
-            font-size: 2rem;
-            font-weight: 700;
-            color: #2d3748;
-            margin-bottom: 0.3rem;
-        }
-
-        .stat-info p {
-            color: #718096;
-            font-size: 0.9rem;
-            font-weight: 500;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .stat-icon {
-            width: 60px;
-            height: 60px;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            border-radius: 15px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 1.8rem;
-            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
-        }
-
-        .nav-tabs {
-            display: flex;
-            gap: 1rem;
-            margin-bottom: 2rem;
-            flex-wrap: wrap;
-        }
-
-        .nav-tab {
-            padding: 1rem 2rem;
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 50px;
-            color: white;
-            font-weight: 600;
-            cursor: pointer;
-            transition: 0.3s;
-            display: flex;
-            align-items: center;
-            gap: 0.8rem;
-        }
-
-        .nav-tab:hover {
-            background: rgba(255, 255, 255, 0.2);
-            transform: translateY(-2px);
-        }
-
-        .nav-tab.active {
-            background: white;
-            color: #2d3748;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-        }
-
-        .badge-count {
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: white;
-            padding: 0.2rem 0.7rem;
-            border-radius: 50px;
-            font-size: 0.7rem;
-            font-weight: 600;
-        }
-
-        .badge-count.warning {
-            background: #ef4444;
-        }
-
-        .content-card {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 2rem;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            animation: fadeIn 0.5s ease;
-            display: none;
-        }
-
-        .content-card.active {
-            display: block;
-        }
-
-        .card-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 2rem;
-            flex-wrap: wrap;
-            gap: 1rem;
-        }
-
-        .card-header h2 {
-            font-size: 1.8rem;
-            font-weight: 700;
-            color: #2d3748;
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-
-        .table-responsive {
-            overflow-x: auto;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        th {
-            text-align: left;
-            padding: 1rem;
-            color: #718096;
-            font-weight: 600;
-            font-size: 0.9rem;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            border-bottom: 2px solid #e2e8f0;
-        }
-
-        td {
-            padding: 1rem;
-            border-bottom: 1px solid #e2e8f0;
-            color: #2d3748;
-        }
-
-        tr:hover {
-            background: #f7fafc;
-        }
-
-        .user-cell {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-
-        .user-avatar {
-            width: 45px;
-            height: 45px;
-            border-radius: 12px;
-            object-fit: cover;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: 600;
-            font-size: 1.2rem;
-        }
-
-        .status-badge {
-            padding: 0.4rem 1rem;
-            border-radius: 50px;
-            font-size: 0.8rem;
-            font-weight: 600;
-            display: inline-block;
-        }
-
-        .status-approved {
-            background: #c6f6d5;
-            color: #22543d;
-        }
-
-        .status-pending {
-            background: #feebc8;
-            color: #744210;
-        }
-
-        .status-rejected {
-            background: #fed7d7;
-            color: #742a2a;
-        }
-
-        .status-frozen {
-            background: #e9d8fd;
-            color: #44337a;
-        }
-
-        .role-badge {
-            padding: 0.4rem 1rem;
-            border-radius: 50px;
-            font-size: 0.8rem;
-            font-weight: 600;
-        }
-
-        .role-admin {
-            background: #fed7d7;
-            color: #9b2c2c;
-        }
-
-        .role-user {
-            background: #c6f6d5;
-            color: #22543d;
-        }
-
-        .action-btn {
-            padding: 0.5rem 1rem;
-            border-radius: 8px;
-            font-size: 0.8rem;
-            font-weight: 600;
-            text-decoration: none;
-            margin: 0 0.2rem;
-            display: inline-block;
-            transition: 0.3s;
-            border: none;
-            cursor: pointer;
-        }
-
-        .btn-approve {
-            background: #48bb78;
-            color: white;
-        }
-
-        .btn-reject {
-            background: #f56565;
-            color: white;
-        }
-
-        .btn-freeze {
-            background: #ed8936;
-            color: white;
-        }
-
-        .btn-unfreeze {
-            background: #4299e1;
-            color: white;
-        }
-
-        .btn-view {
-            background: #667eea;
-            color: white;
-        }
-
-        .action-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
-        }
-
-        .suspicious-row {
-            background: linear-gradient(135deg, #fff5f5, #fed7d7);
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0% { background: #fff5f5; }
-            50% { background: #fed7d7; }
-            100% { background: #fff5f5; }
-        }
-
-        @keyframes slideDown {
-            from { opacity: 0; transform: translateY(-30px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        @keyframes fadeInUp {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-
-        .chart-container {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 2rem;
-            margin-top: 2rem;
-        }
-
-        .chart-card {
-            background: white;
-            border-radius: 15px;
-            padding: 1.5rem;
-            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.05);
-        }
-
-        .chart-card h3 {
-            color: #2d3748;
-            margin-bottom: 1rem;
-            font-size: 1.1rem;
-        }
-
-        .quick-actions {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin-top: 2rem;
-        }
-
-        .quick-action {
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: white;
-            padding: 1.5rem;
-            border-radius: 15px;
-            text-decoration: none;
-            transition: 0.3s;
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-
-        .quick-action:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
-        }
-
-        @media (max-width: 768px) {
-            .navbar {
-                flex-direction: column;
-                gap: 1rem;
-                padding: 1rem;
-            }
-            .nav-right {
-                flex-direction: column;
-                width: 100%;
-            }
-            .admin-badge, .logout-btn {
-                width: 100%;
-                justify-content: center;
-            }
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-            .nav-tabs {
-                flex-direction: column;
-            }
-            .nav-tab {
-                width: 100%;
-                justify-content: center;
-            }
-            .card-header {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); min-height: 100vh; color: #f8fafc; }
+        .navbar { background: #1e293b; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); padding: 1rem 2rem; position: sticky; top: 0; z-index: 1000; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+        .logo { font-size: 1.6rem; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; }
+        .logo span { color: #38bdf8; }
+        .nav-right { display: flex; align-items: center; gap: 2rem; }
+        .admin-badge { background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.2); color: #38bdf8; padding: 0.5rem 1.5rem; border-radius: 50px; font-weight: 600; font-size: 0.9rem; display: flex; align-items: center; gap: 0.5rem; }
+        .logout-btn { background: #ef4444; color: white; padding: 0.5rem 1.5rem; border-radius: 50px; text-decoration: none; font-weight: 600; font-size: 0.9rem; display: flex; align-items: center; gap: 0.5rem; transition: 0.3s; }
+        .logout-btn:hover { background: #dc2626; transform: translateY(-2px); }
+        .container { max-width: 1400px; margin: 2rem auto; padding: 0 2rem; }
+        .alert { padding: 15px 20px; border-radius: 10px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; background: #14532d; color: #4ade80; border: 1px solid #166534; }
+        .welcome-section { background: #1e293b; border-radius: 20px; padding: 2rem; margin-bottom: 2rem; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.05); }
+        .welcome-section h1 { font-size: 2.2rem; font-weight: 700; color: white; margin-bottom: 0.5rem; }
+        .welcome-section p { color: #94a3b8; font-size: 1.05rem; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
+        .stat-card { background: #1e293b; border-radius: 20px; padding: 1.8rem; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.05); display: flex; align-items: center; justify-content: space-between; }
+        .stat-info h3 { font-size: 2rem; font-weight: 700; color: white; margin-bottom: 0.3rem; }
+        .stat-info p { color: #94a3b8; font-size: 0.85rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+        .stat-icon { width: 55px; height: 55px; background: rgba(56, 189, 248, 0.1); border-radius: 15px; display: flex; align-items: center; justify-content: center; color: #38bdf8; font-size: 1.6rem; }
+        .nav-tabs { display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap; }
+        .nav-tab { padding: 0.8rem 1.8rem; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 50px; color: #cbd5e1; font-weight: 600; cursor: pointer; transition: 0.3s; display: flex; align-items: center; gap: 0.8rem; }
+        .nav-tab.active { background: #38bdf8; color: #0f172a; box-shadow: 0 10px 30px rgba(56, 189, 248, 0.2); }
+        .badge-count { background: #334155; color: white; padding: 0.2rem 0.7rem; border-radius: 50px; font-size: 0.75rem; font-weight: 600; }
+        .badge-count.warning { background: #ef4444; }
+        .content-card { background: #1e293b; border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 20px; padding: 2rem; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3); display: none; }
+        .content-card.active { display: block; }
+        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem; }
+        .card-header h2 { font-size: 1.6rem; font-weight: 700; color: white; display: flex; align-items: center; gap: 1rem; }
+        .table-responsive { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; padding: 1rem; color: #94a3b8; font-weight: 600; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid #334155; }
+        td { padding: 1rem; border-bottom: 1px solid #334155; color: #e2e8f0; }
+        tr:hover { background: #0f172a; }
+        .user-cell { display: flex; align-items: center; gap: 1rem; }
+        .user-avatar { width: 40px; height: 40px; border-radius: 10px; background: #38bdf8; display: flex; align-items: center; justify-content: center; color: #0f172a; font-weight: 700; font-size: 1.1rem; }
+        .status-badge { padding: 0.3rem 0.9rem; border-radius: 50px; font-size: 0.75rem; font-weight: 700; display: inline-block; text-transform: uppercase; }
+        .status-approved { background: #14532d; color: #4ade80; }
+        .status-pending { background: #78350f; color: #fef08a; }
+        .status-rejected { background: #7f1d1d; color: #fca5a5; }
+        .status-frozen { background: #4c1d95; color: #e9d8fd; }
+        .role-badge { padding: 0.3rem 0.9rem; border-radius: 50px; font-size: 0.75rem; font-weight: 700; }
+        .role-admin { background: #7f1d1d; color: #fca5a5; }
+        .role-user { background: #14532d; color: #4ade80; }
+        .action-btn { padding: 0.5rem 0.8rem; border-radius: 8px; font-size: 0.8rem; font-weight: 600; text-decoration: none; margin: 0 0.2rem; display: inline-flex; align-items: center; justify-content: center; transition: 0.2s; border: none; cursor: pointer; color: white; }
+        .btn-approve { background: #10b981; }
+        .btn-reject { background: #ef4444; }
+        .btn-freeze { background: #f59e0b; }
+        .btn-unfreeze { background: #38bdf8; color: #0f172a; }
+        .btn-view { background: #6366f1; }
+        .action-btn:hover { transform: translateY(-2px); filter: brightness(1.1); }
+        .suspicious-row { background: rgba(239, 68, 68, 0.08); border-left: 4px solid #ef4444; }
+        .chart-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; margin-top: 2rem; }
+        .chart-card { background: #1e293b; border: 1px solid rgba(255,255,255,0.05); border-radius: 15px; padding: 1.5rem; }
+        .chart-card h3 { color: white; margin-bottom: 1rem; font-size: 1.1rem; }
+        .quick-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-top: 2rem; }
+        .quick-action { background: linear-gradient(135deg, #38bdf8, #0284c7); color: #0f172a; padding: 1.5rem; border-radius: 15px; text-decoration: none; transition: 0.3s; display: flex; align-items: center; gap: 1rem; }
+        .quick-action:hover { transform: translateY(-5px); box-shadow: 0 10px 25px rgba(56, 189, 248, 0.3); }
     </style>
 </head>
 <body>
     <nav class="navbar">
         <div class="logo">
-            <i class="fas fa-university"></i> Barclays Banking
+            <i class="fas fa-university" style="color:#38bdf8;"></i> BARCLAYS <span>ADMIN</span>
         </div>
         <div class="nav-right">
             <div class="admin-badge">
-                <i class="fas fa-shield-alt"></i> Administrator
+                <i class="fas fa-shield-alt"></i> Control Center
             </div>
             <a href="logout.php" class="logout-btn">
                 <i class="fas fa-sign-out-alt"></i> Logout
@@ -719,42 +288,42 @@ $all_loans = $pdo->query("
 
     <div class="container">
         <?php if (!empty($message)): ?>
-        <div class="alert alert-success">
+        <div class="alert">
             <i class="fas fa-check-circle"></i> <?php echo $message; ?>
         </div>
         <?php endif; ?>
 
         <div class="welcome-section">
-            <h1>Welcome back, Admin</h1>
-            <p>Here's what's happening with your bank today (Currency: <?php echo $currency_code; ?> <?php echo $currency_symbol; ?>)</p>
+            <h1>System Overview Terminal</h1>
+            <p>Evaluating active account clusters and system node verification pools (Currency: <?php echo $currency_code; ?> <?php echo $currency_symbol; ?>)</p>
         </div>
 
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-info">
                     <h3><?php echo $total_users; ?></h3>
-                    <p>Total Users</p>
+                    <p>Total Registered Users</p>
                 </div>
                 <div class="stat-icon"><i class="fas fa-users"></i></div>
             </div>
             <div class="stat-card">
                 <div class="stat-info">
                     <h3><?php echo $pending_approvals; ?></h3>
-                    <p>Pending Approvals</p>
+                    <p>Awaiting Approval</p>
                 </div>
                 <div class="stat-icon"><i class="fas fa-clock"></i></div>
             </div>
             <div class="stat-card">
                 <div class="stat-info">
                     <h3><?php echo $total_transactions; ?></h3>
-                    <p>Transactions</p>
+                    <p>Logged Transactions</p>
                 </div>
                 <div class="stat-icon"><i class="fas fa-exchange-alt"></i></div>
             </div>
             <div class="stat-card">
                 <div class="stat-info">
                     <h3><?php echo $frozen_accounts; ?></h3>
-                    <p>Frozen Accounts</p>
+                    <p>Locked Core Nodes</p>
                 </div>
                 <div class="stat-icon"><i class="fas fa-snowflake"></i></div>
             </div>
@@ -771,38 +340,41 @@ $all_loans = $pdo->query("
 
         <div id="users" class="content-card active">
             <div class="card-header">
-                <h2><i class="fas fa-user-cog"></i> User Management</h2>
-                <div class="badge-count"><?php echo count($users); ?> users</div>
+                <h2><i class="fas fa-user-cog" style="color:#38bdf8;"></i> User Control Deck</h2>
+                <div class="badge-count"><?php echo count($users); ?> Total Clusters</div>
             </div>
             <div class="table-responsive">
                 <table>
                     <thead>
                         <tr>
-                            <th>User</th>
-                            <th>Account</th>
-                            <th>Balance (<?php echo $currency_symbol; ?>)</th>
-                            <th>Role</th>
-                            <th>Status</th>
-                            <th>Actions</th>
+                            <th>User Profile Node</th>
+                            <th>Account String</th>
+                            <th>Balance Metric</th>
+                            <th>Authority Role</th>
+                            <th>Status State</th>
+                            <th>Management Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($users as $u): ?>
+                        <?php foreach ($users as $u): 
+                            // Enforce clean decimal float check directly inside current parsing row context loop bounds
+                            $sanitized_balance = (isset($u['balance']) && !empty($u['balance'])) ? floatval($u['balance']) : 0.00;
+                        ?>
                         <tr>
                             <td>
                                 <div class="user-cell">
                                     <div class="user-avatar">
-                                        <?php echo substr($u['full_name'], 0, 1); ?>
+                                        <?php echo substr($u['full_name'] ?? 'U', 0, 1); ?>
                                     </div>
                                     <div>
-                                        <strong><?php echo htmlspecialchars($u['full_name']); ?></strong>
+                                        <strong><?php echo htmlspecialchars($u['full_name'] ?? 'N/A'); ?></strong>
                                         <br>
-                                        <small><?php echo $u['email']; ?></small>
+                                        <small style="color:#94a3b8;"><?php echo htmlspecialchars($u['email'] ?? ''); ?></small>
                                     </div>
                                 </div>
                             </td>
-                            <td>****<?php echo substr($u['account_number'] ?? '0000', -4); ?></td>
-                            <td><strong><?php echo $currency_symbol; ?><?php echo number_format($u['balance'] ?? 0, 2); ?></strong></td>
+                            <td style="font-family:monospace; letter-spacing:0.5px;">****<?php echo substr($u['account_number'] ?? '0000', -4); ?></td>
+                            <td><strong style="color:#38bdf8;"><?php echo $currency_symbol; ?><?php echo number_format($sanitized_balance, 2); ?></strong></td>
                             <td>
                                 <span class="role-badge role-<?php echo $u['role']; ?>">
                                     <?php echo strtoupper($u['role']); ?>
@@ -858,7 +430,7 @@ $all_loans = $pdo->query("
                             <td><?php echo htmlspecialchars($t['sender_name'] ?? 'System'); ?></td>
                             <td><?php echo htmlspecialchars($t['receiver_name'] ?? 'System'); ?></td>
                             <td><strong><?php echo $currency_symbol; ?><?php echo number_format($t['amount'], 2); ?></strong></td>
-                            <td><span class="role-badge"><?php echo ucfirst($t['type']); ?></span></td>
+                            <td><span class="role-badge" style="background:#334155; color:white;"><?php echo ucfirst($t['type']); ?></span></td>
                         </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -868,14 +440,14 @@ $all_loans = $pdo->query("
 
         <div id="suspicious" class="content-card">
             <div class="card-header">
-                <h2><i class="fas fa-exclamation-triangle"></i> Suspicious Transactions</h2>
-                <div class="badge-count">High Value > <?php echo $currency_symbol; ?>10,000</div>
+                <h2><i class="fas fa-exclamation-triangle" style="color:#ef4444;"></i> Suspicious Transactions</h2>
+                <div class="badge-count" style="background:#ef4444;">High Value > <?php echo $currency_symbol; ?>10,000</div>
             </div>
             <?php if (empty($suspicious)): ?>
                 <div style="text-align: center; padding: 4rem;">
-                    <i class="fas fa-check-circle" style="font-size: 4rem; color: #48bb78; margin-bottom: 1rem;"></i>
+                    <i class="fas fa-check-circle" style="font-size: 4rem; color: #10b981; margin-bottom: 1rem;"></i>
                     <h3>No Suspicious Transactions</h3>
-                    <p>All transactions are within normal limits.</p>
+                    <p style="color:#94a3b8; margin-top:5px;">All transaction nodes operate inside default boundaries.</p>
                 </div>
             <?php else: ?>
                 <div class="table-responsive">
@@ -894,7 +466,7 @@ $all_loans = $pdo->query("
                             <tr class="suspicious-row">
                                 <td><?php echo date('M d, Y h:i A', strtotime($s['created_at'])); ?></td>
                                 <td><?php echo htmlspecialchars($s['sender_name']); ?></td>
-                                <td><strong><?php echo $currency_symbol; ?><?php echo number_format($s['amount'], 2); ?></strong></td>
+                                <td style="color:#ef4444;"><strong><?php echo $currency_symbol; ?><?php echo number_format($s['amount'], 2); ?></strong></td>
                                 <td><?php echo ucfirst($s['type']); ?></td>
                                 <td><a href="#" class="action-btn btn-view"><i class="fas fa-eye"></i> View</a></td>
                             </tr>
@@ -912,7 +484,7 @@ $all_loans = $pdo->query("
             </div>
             <?php if (empty($all_deposits)): ?>
                 <div style="text-align: center; padding: 4rem;">
-                    <i class="fas fa-inbox" style="font-size: 4rem; color: #cbd5e1; margin-bottom: 1rem;"></i>
+                    <i class="fas fa-inbox" style="font-size: 4rem; color: #475569; margin-bottom: 1rem;"></i>
                     <h3>No Deposit Requests</h3>
                 </div>
             <?php else: ?>
@@ -937,7 +509,7 @@ $all_loans = $pdo->query("
                                 <td>
                                     <strong><?php echo htmlspecialchars($deposit['full_name']); ?></strong>
                                     <br>
-                                    <small><?php echo $deposit['email']; ?></small>
+                                    <small style="color:#94a3b8;"><?php echo $deposit['email']; ?></small>
                                 </td>
                                 <td><strong><?php echo $currency_symbol; ?><?php echo number_format($deposit['amount'], 2); ?></strong></td>
                                 <td><?php echo str_replace('_', ' ', ucfirst($deposit['payment_method'])); ?></td>
@@ -971,7 +543,7 @@ $all_loans = $pdo->query("
             </div>
             <?php if (empty($all_loans)): ?>
                 <div style="text-align: center; padding: 4rem;">
-                    <i class="fas fa-inbox" style="font-size: 4rem; color: #cbd5e1; margin-bottom: 1rem;"></i>
+                    <i class="fas fa-inbox" style="font-size: 4rem; color: #475569; margin-bottom: 1rem;"></i>
                     <h3>No Loan Applications</h3>
                 </div>
             <?php else: ?>
@@ -991,13 +563,15 @@ $all_loans = $pdo->query("
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($all_loans as $loan): ?>
+                            <?php foreach ($all_loans as $loan): 
+                                $sanitized_loan_balance = (isset($loan['balance']) && !empty($loan['balance'])) ? floatval($loan['balance']) : 0.00;
+                            ?>
                             <tr>
                                 <td>#<?php echo $loan['id']; ?></td>
                                 <td>
                                     <strong><?php echo htmlspecialchars($loan['full_name']); ?></strong>
                                     <br>
-                                    <small><?php echo $loan['email']; ?></small>
+                                    <small style="color:#94a3b8;">A/C Liquidity: <?php echo $currency_symbol . number_format($sanitized_loan_balance, 2); ?></small>
                                 </td>
                                 <td><strong><?php echo $currency_symbol; ?><?php echo number_format($loan['amount'], 2); ?></strong></td>
                                 <td><?php echo ucfirst($loan['loan_type']); ?></td>
@@ -1031,18 +605,18 @@ $all_loans = $pdo->query("
             </div>
             <div class="chart-container">
                 <div class="chart-card">
-                    <h3>User Status Distribution</h3>
+                    <h3 style="color:#94a3b8;">User Status Distribution</h3>
                     <canvas id="userChart"></canvas>
                 </div>
                 <div class="chart-card">
-                    <h3>Transaction Types</h3>
+                    <h3 style="color:#94a3b8;">Transaction Types</h3>
                     <canvas id="transactionChart"></canvas>
                 </div>
             </div>
             <div class="quick-actions">
-                <a href="#" class="quick-action"><i class="fas fa-file-pdf fa-2x"></i><div><strong>Generate Report</strong><br><small>Download PDF</small></div></a>
-                <a href="#" class="quick-action"><i class="fas fa-envelope fa-2x"></i><div><strong>Email All Users</strong><br><small>Send Notification</small></div></a>
-                <a href="#" class="quick-action"><i class="fas fa-cog fa-2x"></i><div><strong>Settings</strong><br><small>Bank Configuration</small></div></a>
+                <a href="#" class="quick-action" style="color:#0f172a;"><i class="fas fa-file-pdf fa-2x"></i><div><strong>Generate Report</strong><br><small>Download PDF</small></div></a>
+                <a href="#" class="quick-action" style="color:#0f172a;"><i class="fas fa-envelope fa-2x"></i><div><strong>Email All Users</strong><br><small>Send Notification</small></div></a>
+                <a href="#" class="quick-action" style="color:#0f172a;"><i class="fas fa-cog fa-2x"></i><div><strong>Settings</strong><br><small>Bank Configuration</small></div></a>
             </div>
         </div>
     </div>
@@ -1068,11 +642,11 @@ $all_loans = $pdo->query("
                     labels: ['Active', 'Pending', 'Frozen'],
                     datasets: [{
                         data: [<?php echo max(0, $total_users - $pending_approvals - $frozen_accounts); ?>, <?php echo $pending_approvals; ?>, <?php echo $frozen_accounts; ?>],
-                        backgroundColor: ['#48bb78', '#fbbf24', '#f87171'],
+                        backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
                         borderWidth: 0
                     }]
                 },
-                options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
+                options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8' } } } }
             });
             new Chart(document.getElementById('transactionChart'), {
                 type: 'bar',
@@ -1081,11 +655,11 @@ $all_loans = $pdo->query("
                     datasets: [{
                         label: 'Transaction Count',
                         data: [12, 19, 3],
-                        backgroundColor: ['#667eea', '#764ba2', '#f687b3'],
+                        backgroundColor: ['#38bdf8', '#6366f1', '#ec4899'],
                         borderRadius: 8
                     }]
                 },
-                options: { responsive: true, plugins: { legend: { display: false } } }
+                options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { ticks: { color: '#94a3b8' } }, x: { ticks: { color: '#94a3b8' } } } }
             });
         };
     </script>
