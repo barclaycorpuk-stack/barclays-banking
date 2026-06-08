@@ -1,5 +1,8 @@
 <?php
-session_start();
+// deposit.php - Completed Multi-Currency Deposit System for PostgreSQL
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 require_once 'db.php';
 
 if (!isset($_SESSION['user_id'])) {
@@ -11,7 +14,7 @@ $user_id = $_SESSION['user_id'];
 $message = "";
 $error = "";
 
-// Force clean presentation variables for Euro
+// Force presentation variables for Euro consistency across dashboards
 $currency_symbol = '€';
 $currency_code = 'EUR';
 
@@ -73,19 +76,24 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['request_deposit'])) {
             $stmt = $pdo->prepare("INSERT INTO deposit_requests (user_id, amount, reason, payment_method, receipt_path, status, requested_date) VALUES (?, ?, ?, ?, ?, 'pending', NOW())");
             $stmt->execute([$user_id, $amount, $reason, $payment_method, $receipt_path]);
             
+            // Fixed: Built strings directly in PHP to prevent PostgreSQL indeterminate data-type errors (parameter $2 exceptions)
+            $formatted_amount = $currency_symbol . number_format($amount, 2);
+            $user_notification_msg = "Your deposit request of " . $formatted_amount . " has been submitted and is pending approval.";
+            $admin_notification_msg = "User " . $user['full_name'] . " requested a deposit of " . $formatted_amount;
+
             // NOTIFICATION: Add notification for user
-            $stmt2 = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (?, 'deposit', 'Deposit Request Submitted', CONCAT('Your deposit request of ', ?, ' has been submitted and is pending approval.'), NOW())");
-            $stmt2->execute([$user_id, $currency_symbol . number_format($amount, 2)]);
+            $stmt2 = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (?, 'deposit', 'Deposit Request Submitted', ?, NOW())");
+            $stmt2->execute([$user_id, $user_notification_msg]);
             
             // NOTIFICATION: Add notification for admin (user_id = 1)
-            $stmt3 = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (1, 'deposit', 'New Deposit Request', CONCAT('User ', ?, ' requested a deposit of ', ?), NOW())");
-            $stmt3->execute([$user['full_name'], $currency_symbol . number_format($amount, 2)]);
+            $stmt3 = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (1, 'deposit', 'New Deposit Request', ?, NOW())");
+            $stmt3->execute([$admin_notification_msg]);
             
             $pdo->commit();
             $message = "✅ Deposit request submitted! Please wait for admin approval. Funds will be added to your account once approved.";
             
-            // Refresh local balance metric variables safely
-            $account_balance = 0.00; 
+            // Refresh local balance metric variables safely to protect zero-balance boundaries
+            $account_balance = (isset($account['balance']) && !empty($account['balance'])) ? floatval($account['balance']) : 0.00;
         } catch (Exception $e) {
             $pdo->rollBack();
             $error = "Transaction failed: " . $e->getMessage();
