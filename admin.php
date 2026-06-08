@@ -43,11 +43,11 @@ if (isset($_GET['action']) && isset($_GET['id']) && !isset($_GET['deposit_id']) 
     exit;
 }
 
-// --- Handle Deposit Approval/Rejection ---
+// --- Handle Deposit Approval/Rejection (FIXED TRANSACTION FLOW) ---
 if (isset($_GET['action']) && isset($_GET['deposit_id'])) {
     $action = $_GET['action'];
     $deposit_id = intval($_GET['deposit_id']);
-    $admin_note = isset($_GET['note']) ? $_GET['note'] : '';
+    $admin_note = isset($_GET['note']) ? $_GET['note'] : 'Processed by administration';
     
     if ($action == 'approve_deposit') {
         $stmt = $pdo->prepare("SELECT * FROM deposit_requests WHERE id = ?");
@@ -56,44 +56,71 @@ if (isset($_GET['action']) && isset($_GET['deposit_id'])) {
         
         if ($deposit && $deposit['status'] == 'pending') {
             try {
+                // 1. Initialize safe atomicity wrapper transaction bounds
                 $pdo->beginTransaction();
                 
                 $stmt = $pdo->prepare("SELECT id FROM accounts WHERE user_id = ?");
                 $stmt->execute([$deposit['user_id']]);
                 $account_id = $stmt->fetchColumn();
                 
+                if (!$account_id) {
+                    throw new Exception("Account link could not be determined for this specific user node pool.");
+                }
+                
+                // 2. Adjust target balance configurations
                 $pdo->prepare("UPDATE accounts SET balance = balance + ? WHERE id = ?")->execute([$deposit['amount'], $account_id]);
                 
+                // 3. Log into master system ledger
                 $stmt = $pdo->prepare("INSERT INTO transactions (sender_account_id, receiver_account_id, amount, type, description, created_at) VALUES (?, ?, ?, 'deposit', 'Admin approved deposit request', NOW())");
                 $stmt->execute([$account_id, $account_id, $deposit['amount']]);
                 
+                // 4. Update the deposit request tracker row elements
                 $pdo->prepare("UPDATE deposit_requests SET status = 'approved', approved_date = NOW(), admin_notes = ? WHERE id = ?")->execute([$admin_note, $deposit_id]);
                 
+                // 5. CRITICAL FIX: Pre-build text structure in PHP and push notification INSIDE transaction bounds
+                $msg_text = "Your deposit of " . $currency_symbol . number_format($deposit['amount'], 2) . " has been approved and added to your account!";
+                $stmt = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (?, 'deposit', 'Deposit Approved', ?, NOW())");
+                $stmt->execute([$deposit['user_id'], $msg_text]);
+                
+                // 6. Commit everything together safely at the exact same moment
                 $pdo->commit();
-                
-                // Add notification for user
-                $stmt = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (?, 'deposit', 'Deposit Approved', CONCAT('Your deposit of ', ?, ' has been approved and added to your account!'), NOW())");
-                $stmt->execute([$deposit['user_id'], $currency_symbol . number_format($deposit['amount'], 2)]);
-                
-                $message = "Deposit approved! Funds added to user's account.";
+                $message = "Deposit approved successfully! Funds settled securely.";
                 
             } catch (Exception $e) {
-                $pdo->rollBack();
-                $message = "Error: " . $e->getMessage();
+                // Safely rollback if ANY item above failed before committing
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                $error = "Approval Failure Error trace parameters: " . $e->getMessage();
             }
         }
     } elseif ($action == 'reject_deposit') {
-        $pdo->prepare("UPDATE deposit_requests SET status = 'rejected', admin_notes = ? WHERE id = ?")->execute([$admin_note, $deposit_id]);
-        
-        // Add notification for user
-        $stmt = $pdo->prepare("SELECT user_id FROM deposit_requests WHERE id = ?");
-        $stmt->execute([$deposit_id]);
-        $user_id_reject = $stmt->fetchColumn();
-        $stmt = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (?, 'deposit', 'Deposit Rejected', 'Your deposit request has been rejected.', NOW())");
-        $stmt->execute([$user_id_reject]);
-        
-        $message = "Deposit request rejected.";
+        try {
+            $pdo->beginTransaction();
+            
+            $pdo->prepare("UPDATE deposit_requests SET status = 'rejected', admin_notes = ? WHERE id = ?")->execute([$admin_note, $deposit_id]);
+            
+            $stmt = $pdo->prepare("SELECT user_id FROM deposit_requests WHERE id = ?");
+            $stmt->execute([$deposit_id]);
+            $user_id_reject = $stmt->fetchColumn();
+            
+            if ($user_id_reject) {
+                $stmt = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (?, 'deposit', 'Deposit Rejected', 'Your deposit request has been rejected by system administration.', NOW())");
+                $stmt->execute([$user_id_reject]);
+            }
+            
+            $pdo->commit();
+            $message = "Deposit request rejected and noted within records loop.";
+        } catch (Exception $e) {
+            if ($pdo->inTransaction()) { $pdo->rollBack(); }
+            $error = "Rejection Error: " . $e->getMessage();
+        }
     }
+    
+    // Store messages in session to persist across the redirect cleanly
+    if (!empty($message)) $_SESSION['admin_msg'] = $message;
+    if (!empty($error)) $_SESSION['admin_err'] = $error;
+    
     header("Location: admin.php");
     exit;
 }
@@ -104,34 +131,54 @@ if (isset($_GET['action']) && isset($_GET['loan_id'])) {
     $loan_id = intval($_GET['loan_id']);
     
     if ($action == 'approve_loan') {
-        $stmt = $pdo->prepare("SELECT user_id FROM loan_applications WHERE id = ?");
-        $stmt->execute([$loan_id]);
-        $loan_user_id = $stmt->fetchColumn();
-        
-        $pdo->prepare("UPDATE loan_applications SET status = 'approved', approved_date = NOW() WHERE id = ?")->execute([$loan_id]);
-        
-        // Add notification for user
-        $stmt = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (?, 'loan', 'Loan Approved', 'Congratulations! Your loan application has been approved.', NOW())");
-        $stmt->execute([$loan_user_id]);
-        
-        $message = "Loan approved successfully!";
-        
+        try {
+            $pdo->beginTransaction();
+            $stmt = $pdo->prepare("SELECT user_id FROM loan_applications WHERE id = ?");
+            $stmt->execute([$loan_id]);
+            $loan_user_id = $stmt->fetchColumn();
+            
+            $pdo->prepare("UPDATE loan_applications SET status = 'approved', approved_date = NOW() WHERE id = ?")->execute([$loan_id]);
+            
+            if ($loan_user_id) {
+                $stmt = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (?, 'loan', 'Loan Approved', 'Congratulations! Your loan application has been approved.', NOW())");
+                $stmt->execute([$loan_user_id]);
+            }
+            $pdo->commit();
+            $message = "Loan approved successfully!";
+        } catch (Exception $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            $error = "Loan processing fault: " . $e->getMessage();
+        }
     } elseif ($action == 'reject_loan') {
-        $stmt = $pdo->prepare("SELECT user_id FROM loan_applications WHERE id = ?");
-        $stmt->execute([$loan_id]);
-        $loan_user_id = $stmt->fetchColumn();
-        
-        $pdo->prepare("UPDATE loan_applications SET status = 'rejected', approved_date = NOW() WHERE id = ?")->execute([$loan_id]);
-        
-        // Add notification for user
-        $stmt = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (?, 'loan', 'Loan Rejected', 'We regret to inform you that your loan application has been rejected.', NOW())");
-        $stmt->execute([$loan_user_id]);
-        
-        $message = "Loan rejected.";
+        try {
+            $pdo->beginTransaction();
+            $stmt = $pdo->prepare("SELECT user_id FROM loan_applications WHERE id = ?");
+            $stmt->execute([$loan_id]);
+            $loan_user_id = $stmt->fetchColumn();
+            
+            $pdo->prepare("UPDATE loan_applications SET status = 'rejected', approved_date = NOW() WHERE id = ?")->execute([$loan_id]);
+            
+            if ($loan_user_id) {
+                $stmt = $pdo->prepare("INSERT INTO notifications (user_id, type, title, message, created_at) VALUES (?, 'loan', 'Loan Rejected', 'We regret to inform you that your loan application has been rejected.', NOW())");
+                $stmt->execute([$loan_user_id]);
+            }
+            $pdo->commit();
+            $message = "Loan application rejected.";
+        } catch (Exception $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            $error = "Loan rejection fault: " . $e->getMessage();
+        }
     }
+    
+    if (!empty($message)) $_SESSION['admin_msg'] = $message;
+    if (!empty($error)) $_SESSION['admin_err'] = $error;
     header("Location: admin.php");
     exit;
 }
+
+// Read flashed session feedback alerts safely
+if (isset($_SESSION['admin_msg'])) { $message = $_SESSION['admin_msg']; unset($_SESSION['admin_msg']); }
+if (isset($_SESSION['admin_err'])) { $error = $_SESSION['admin_err']; unset($_SESSION['admin_err']); }
 
 // Fetch statistics
 $total_users = $pdo->query("SELECT COUNT(*) FROM users WHERE role='user'")->fetchColumn();
@@ -141,7 +188,7 @@ $frozen_accounts = $pdo->query("SELECT COUNT(*) FROM users WHERE is_frozen=1")->
 $pending_deposits_count = $pdo->query("SELECT COUNT(*) FROM deposit_requests WHERE status='pending'")->fetchColumn();
 $pending_loans_count = $pdo->query("SELECT COUNT(*) FROM loan_applications WHERE status='pending'")->fetchColumn();
 
-// Fetch users with explicit fallback query overrides to clean out buffer leaks
+// Fetch users with strict balance formatting structures
 $users = $pdo->query("
     SELECT u.*, 
            COALESCE(a.balance, 0.00) as balance, 
@@ -158,16 +205,13 @@ $users = $pdo->query("
 
 // Fetch transactions
 $transactions = $pdo->query("
-    SELECT t.*, 
-           sender_u.full_name AS sender_name,
-           receiver_u.full_name AS receiver_name
+    SELECT t.*, sender_u.full_name AS sender_name, receiver_u.full_name AS receiver_name
     FROM transactions t
     LEFT JOIN accounts sender_a ON t.sender_account_id = sender_a.id
     LEFT JOIN users sender_u ON sender_a.user_id = sender_u.id
     LEFT JOIN accounts receiver_a ON t.receiver_account_id = receiver_a.id
     LEFT JOIN users receiver_u ON receiver_a.user_id = receiver_u.id
-    ORDER BY t.created_at DESC
-    LIMIT 30
+    ORDER BY t.created_at DESC LIMIT 30
 ")->fetchAll();
 
 // Detect suspicious transactions (over 10,000)
@@ -176,8 +220,7 @@ $suspicious = $pdo->query("
     FROM transactions t
     JOIN accounts sender_a ON t.sender_account_id = sender_a.id
     JOIN users sender_u ON sender_a.user_id = sender_u.id
-    WHERE t.amount > 10000
-    ORDER BY t.amount DESC
+    WHERE t.amount > 10000 ORDER BY t.amount DESC
 ")->fetchAll();
 
 // Fetch deposit requests
@@ -207,7 +250,7 @@ $all_loans = $pdo->query("
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Barclays Banking - Admin Panel (<?php echo $currency_code; ?>)</title>
+    <title>Barclays Banking - Admin Panel</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -222,7 +265,9 @@ $all_loans = $pdo->query("
         .logout-btn { background: #ef4444; color: white; padding: 0.5rem 1.5rem; border-radius: 50px; text-decoration: none; font-weight: 600; font-size: 0.9rem; display: flex; align-items: center; gap: 0.5rem; transition: 0.3s; }
         .logout-btn:hover { background: #dc2626; transform: translateY(-2px); }
         .container { max-width: 1400px; margin: 2rem auto; padding: 0 2rem; }
-        .alert { padding: 15px 20px; border-radius: 10px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; background: #14532d; color: #4ade80; border: 1px solid #166534; }
+        .alert { padding: 15px 20px; border-radius: 10px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; font-weight: 500; font-size: 0.95rem; }
+        .alert-success { background: #14532d; color: #4ade80; border: 1px solid #166534; }
+        .alert-error { background: #7f1d1d; color: #fca5a5; border: 1px solid #991b1b; }
         .welcome-section { background: #1e293b; border-radius: 20px; padding: 2rem; margin-bottom: 2rem; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.05); }
         .welcome-section h1 { font-size: 2.2rem; font-weight: 700; color: white; margin-bottom: 0.5rem; }
         .welcome-section p { color: #94a3b8; font-size: 1.05rem; }
@@ -288,8 +333,13 @@ $all_loans = $pdo->query("
 
     <div class="container">
         <?php if (!empty($message)): ?>
-        <div class="alert">
+        <div class="alert alert-success">
             <i class="fas fa-check-circle"></i> <?php echo $message; ?>
+        </div>
+        <?php endif; ?>
+        <?php if (!empty($error)): ?>
+        <div class="alert alert-error">
+            <i class="fas fa-exclamation-circle"></i> <?php echo $error; ?>
         </div>
         <?php endif; ?>
 
@@ -357,7 +407,6 @@ $all_loans = $pdo->query("
                     </thead>
                     <tbody>
                         <?php foreach ($users as $u): 
-                            // Enforce clean decimal float check directly inside current parsing row context loop bounds
                             $sanitized_balance = (isset($u['balance']) && !empty($u['balance'])) ? floatval($u['balance']) : 0.00;
                         ?>
                         <tr>
