@@ -467,12 +467,45 @@ $qr_image_url = "https://api.qrserver.com/v1/create-qr-code/?size=180x180&data="
 </div>
 
 <script>
-    function openQRModal() { document.getElementById('qrModal').style.display = 'flex'; }
-    function closeQRModal() { document.getElementById('qrModal').style.display = 'none'; }
-    window.onclick = function(event) {
-        let modal = document.getElementById('qrModal');
-        if (event.target == modal) { modal.style.display = 'none'; }
-    }
+        function openQRModal() { document.getElementById('qrModal').style.display = 'flex'; }
+        function closeQRModal() { document.getElementById('qrModal').style.display = 'none'; }
+        window.onclick = function(event) {
+            let modal = document.getElementById('qrModal');
+            if (event.target == modal) { modal.style.display = 'none'; }
+        }
+    </script>
+
+    <script>
+        function pollSystemNotificationMetrics() {
+            fetch('notifications.php?api_action=poll_count')
+                .then(res => res.json())
+                .then(data => {
+                    const badge = document.querySelector('.notification-bell .notification-badge');
+                    if (data.unread_count > 0) {
+                        if (badge) {
+                            badge.innerText = data.unread_count > 99 ? '99+' : data.unread_count;
+                            badge.style.display = 'block';
+                        } else {
+                            const bellLink = document.querySelector('.notification-bell');
+                            if (bellLink) {
+                                const newBadge = document.createElement('span');
+                                newBadge.className = 'notification-badge';
+                                newBadge.innerText = data.unread_count;
+                                bellLink.appendChild(newBadge);
+                            }
+                        }
+                    } else {
+                        if (badge) badge.style.display = 'none';
+                    }
+                }).catch(err => console.log("Silent loop sync skip."));
+        }
+
+        // Run the background checking worker automatically every 5 seconds
+        setInterval(pollSystemNotificationMetrics, 5000);
+    </script>
+
+</body>
+</html>
 </script>
 
 </body>
